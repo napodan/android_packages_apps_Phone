@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006 The Android Open Source Project
+ * Copyright (C) 2012 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -16,441 +16,22 @@
 
 package com.android.phone;
 
-import android.app.Activity;
 import android.app.Application;
-import android.app.KeyguardManager;
-import android.app.PendingIntent;
-import android.app.ProgressDialog;
-import android.bluetooth.BluetoothAdapter;
-import android.bluetooth.BluetoothHeadset;
-import android.bluetooth.BluetoothProfile;
-import android.content.ActivityNotFoundException;
-import android.content.BroadcastReceiver;
-import android.content.ComponentName;
-import android.content.ContentResolver;
-import android.content.Context;
-import android.content.Intent;
-import android.content.IntentFilter;
 import android.content.res.Configuration;
-import android.media.AudioManager;
-import android.net.Uri;
-import android.os.AsyncResult;
-import android.os.Binder;
-import android.os.Handler;
-import android.os.IBinder;
-import android.os.IPowerManager;
-import android.os.LocalPowerManager;
-import android.os.Message;
-import android.os.PowerManager;
-import android.os.RemoteException;
-import android.os.ServiceManager;
-import android.os.SystemClock;
-import android.os.SystemProperties;
-import android.os.UpdateLock;
-import android.preference.PreferenceManager;
-import android.provider.Settings.System;
-import android.telephony.ServiceState;
-import android.text.TextUtils;
-import android.util.Log;
-import android.view.KeyEvent;
-
-import com.android.internal.telephony.Call;
-import com.android.internal.telephony.CallManager;
-import com.android.internal.telephony.IccCard;
-import com.android.internal.telephony.MmiCode;
-import com.android.internal.telephony.Phone;
-import com.android.internal.telephony.PhoneFactory;
-import com.android.internal.telephony.TelephonyCapabilities;
-import com.android.internal.telephony.TelephonyIntents;
-import com.android.internal.telephony.cdma.TtyIntent;
-import com.android.phone.OtaUtils.CdmaOtaScreenState;
-import com.android.server.sip.SipService;
+import android.os.UserHandle;
 
 /**
  * Top-level Application class for the Phone app.
  */
-public class PhoneApp extends Application implements AccelerometerListener.OrientationListener {
-    /* package */ static final String LOG_TAG = "PhoneApp";
-
-    /**
-     * Phone app-wide debug level:
-     *   0 - no debug logging
-     *   1 - normal debug logging if ro.debuggable is set (which is true in
-     *       "eng" and "userdebug" builds but not "user" builds)
-     *   2 - ultra-verbose debug logging
-     *
-     * Most individual classes in the phone app have a local DBG constant,
-     * typically set to
-     *   (PhoneApp.DBG_LEVEL >= 1) && (SystemProperties.getInt("ro.debuggable", 0) == 1)
-     * or else
-     *   (PhoneApp.DBG_LEVEL >= 2)
-     * depending on the desired verbosity.
-     *
-     * ***** DO NOT SUBMIT WITH DBG_LEVEL > 0 *************
-     */
-    /* package */ static final int DBG_LEVEL = 0;
-
-    private static final boolean DBG =
-            (PhoneApp.DBG_LEVEL >= 1) && (SystemProperties.getInt("ro.debuggable", 0) == 1);
-    private static final boolean VDBG = (PhoneApp.DBG_LEVEL >= 2);
-
-    // Message codes; see mHandler below.
-    private static final int EVENT_SIM_NETWORK_LOCKED = 3;
-    private static final int EVENT_WIRED_HEADSET_PLUG = 7;
-    private static final int EVENT_SIM_STATE_CHANGED = 8;
-    private static final int EVENT_UPDATE_INCALL_NOTIFICATION = 9;
-    private static final int EVENT_DATA_ROAMING_DISCONNECTED = 10;
-    private static final int EVENT_DATA_ROAMING_OK = 11;
-    private static final int EVENT_UNSOL_CDMA_INFO_RECORD = 12;
-    private static final int EVENT_DOCK_STATE_CHANGED = 13;
-    private static final int EVENT_TTY_PREFERRED_MODE_CHANGED = 14;
-    private static final int EVENT_TTY_MODE_GET = 15;
-    private static final int EVENT_TTY_MODE_SET = 16;
-    private static final int EVENT_START_SIP_SERVICE = 17;
-
-    // The MMI codes are also used by the InCallScreen.
-    public static final int MMI_INITIATE = 51;
-    public static final int MMI_COMPLETE = 52;
-    public static final int MMI_CANCEL = 53;
-    // Don't use message codes larger than 99 here; those are reserved for
-    // the individual Activities of the Phone UI.
-
-    /**
-     * Allowable values for the poke lock code (timeout between a user activity and the
-     * going to sleep), please refer to {@link com.android.server.PowerManagerService}
-     * for additional reference.
-     *   SHORT uses the short delay for the timeout (SHORT_KEYLIGHT_DELAY, 6 sec)
-     *   MEDIUM uses the medium delay for the timeout (MEDIUM_KEYLIGHT_DELAY, 15 sec)
-     *   DEFAULT is the system-wide default delay for the timeout (1 min)
-     */
-    public enum ScreenTimeoutDuration {
-        SHORT,
-        MEDIUM,
-        DEFAULT
-    }
-
-    /**
-     * Allowable values for the wake lock code.
-     *   SLEEP means the device can be put to sleep.
-     *   PARTIAL means wake the processor, but we display can be kept off.
-     *   FULL means wake both the processor and the display.
-     */
-    public enum WakeState {
-        SLEEP,
-        PARTIAL,
-        FULL
-    }
-
-    /**
-     * Intent Action used for hanging up the current call from Notification bar. This will
-     * choose first ringing call, first active call, or first background call (typically in
-     * HOLDING state).
-     */
-    public static final String ACTION_HANG_UP_ONGOING_CALL =
-            "com.android.phone.ACTION_HANG_UP_ONGOING_CALL";
-
-    /**
-     * Intent Action used for making a phone call from Notification bar.
-     * This is for missed call notifications.
-     */
-    public static final String ACTION_CALL_BACK_FROM_NOTIFICATION =
-            "com.android.phone.ACTION_CALL_BACK_FROM_NOTIFICATION";
-
-    /**
-     * Intent Action used for sending a SMS from notification bar.
-     * This is for missed call notifications.
-     */
-    public static final String ACTION_SEND_SMS_FROM_NOTIFICATION =
-            "com.android.phone.ACTION_SEND_SMS_FROM_NOTIFICATION";
-
-    private static PhoneApp sMe;
-
-    // A few important fields we expose to the rest of the package
-    // directly (rather than thru set/get methods) for efficiency.
-    Phone phone;
-    CallController callController;
-    InCallUiState inCallUiState;
-    CallerInfoCache callerInfoCache;
-    CallNotifier notifier;
-    NotificationMgr notificationMgr;
-    Ringer ringer;
-    BluetoothHandsfree mBtHandsfree;
-    PhoneInterfaceManager phoneMgr;
-    CallManager mCM;
-    int mBluetoothHeadsetState = BluetoothProfile.STATE_DISCONNECTED;
-    int mBluetoothHeadsetAudioState = BluetoothHeadset.STATE_AUDIO_DISCONNECTED;
-    boolean mShowBluetoothIndication = false;
-    static int mDockState = Intent.EXTRA_DOCK_STATE_UNDOCKED;
-    static boolean sVoiceCapable = true;
-
-    // Internal PhoneApp Call state tracker
-    CdmaPhoneCallState cdmaPhoneCallState;
-
-    // The InCallScreen instance (or null if the InCallScreen hasn't been
-    // created yet.)
-    private InCallScreen mInCallScreen;
-
-    // The currently-active PUK entry activity and progress dialog.
-    // Normally, these are the Emergency Dialer and the subsequent
-    // progress dialog.  null if there is are no such objects in
-    // the foreground.
-    private Activity mPUKEntryActivity;
-    private ProgressDialog mPUKEntryProgressDialog;
-
-    private boolean mIsSimPinEnabled;
-    private String mCachedSimPin;
-
-    // True if a wired headset is currently plugged in, based on the state
-    // from the latest Intent.ACTION_HEADSET_PLUG broadcast we received in
-    // mReceiver.onReceive().
-    private boolean mIsHeadsetPlugged;
-
-    // True if the keyboard is currently *not* hidden
-    // Gets updated whenever there is a Configuration change
-    private boolean mIsHardKeyboardOpen;
-
-    // True if we are beginning a call, but the phone state has not changed yet
-    private boolean mBeginningCall;
-
-    // Last phone state seen by updatePhoneState()
-    private Phone.State mLastPhoneState = Phone.State.IDLE;
-
-    private WakeState mWakeState = WakeState.SLEEP;
-
-    /**
-     * Timeout setting used by PokeLock.
-     *
-     * This variable won't be effective when proximity sensor is available in the device.
-     *
-     * @see ScreenTimeoutDuration
-     */
-    private ScreenTimeoutDuration mScreenTimeoutDuration = ScreenTimeoutDuration.DEFAULT;
-    /**
-     * Used to set/unset {@link LocalPowerManager#POKE_LOCK_IGNORE_TOUCH_EVENTS} toward PokeLock.
-     *
-     * This variable won't be effective when proximity sensor is available in the device.
-     */
-    private boolean mIgnoreTouchUserActivity = false;
-    private final IBinder mPokeLockToken = new Binder();
-
-    private IPowerManager mPowerManagerService;
-    private PowerManager.WakeLock mWakeLock;
-    private PowerManager.WakeLock mPartialWakeLock;
-    private PowerManager.WakeLock mProximityWakeLock;
-    private KeyguardManager mKeyguardManager;
-    private AccelerometerListener mAccelerometerListener;
-    private int mOrientation = AccelerometerListener.ORIENTATION_UNKNOWN;
-
-    private UpdateLock mUpdateLock;
-
-    // Broadcast receiver for various intent broadcasts (see onCreate())
-    private final BroadcastReceiver mReceiver = new PhoneAppBroadcastReceiver();
-
-    // Broadcast receiver purely for ACTION_MEDIA_BUTTON broadcasts
-    private final BroadcastReceiver mMediaButtonReceiver = new MediaButtonBroadcastReceiver();
-
-    /** boolean indicating restoring mute state on InCallScreen.onResume() */
-    private boolean mShouldRestoreMuteOnInCallResume;
-
-    /**
-     * The singleton OtaUtils instance used for OTASP calls.
-     *
-     * The OtaUtils instance is created lazily the first time we need to
-     * make an OTASP call, regardless of whether it's an interactive or
-     * non-interactive OTASP call.
-     */
-    public OtaUtils otaUtils;
-
-    // Following are the CDMA OTA information Objects used during OTA Call.
-    // cdmaOtaProvisionData object store static OTA information that needs
-    // to be maintained even during Slider open/close scenarios.
-    // cdmaOtaConfigData object stores configuration info to control visiblity
-    // of each OTA Screens.
-    // cdmaOtaScreenState object store OTA Screen State information.
-    public OtaUtils.CdmaOtaProvisionData cdmaOtaProvisionData;
-    public OtaUtils.CdmaOtaConfigData cdmaOtaConfigData;
-    public OtaUtils.CdmaOtaScreenState cdmaOtaScreenState;
-    public OtaUtils.CdmaOtaInCallScreenUiState cdmaOtaInCallScreenUiState;
-
-    // TTY feature enabled on this platform
-    private boolean mTtyEnabled;
-    // Current TTY operating mode selected by user
-    private int mPreferredTtyMode = Phone.TTY_MODE_OFF;
-
-    /**
-     * Set the restore mute state flag. Used when we are setting the mute state
-     * OUTSIDE of user interaction {@link PhoneUtils#startNewCall(Phone)}
-     */
-    /*package*/void setRestoreMuteOnInCallResume (boolean mode) {
-        mShouldRestoreMuteOnInCallResume = mode;
-    }
-
-    /**
-     * Get the restore mute state flag.
-     * This is used by the InCallScreen {@link InCallScreen#onResume()} to figure
-     * out if we need to restore the mute state for the current active call.
-     */
-    /*package*/boolean getRestoreMuteOnInCallResume () {
-        return mShouldRestoreMuteOnInCallResume;
-    }
-
-    Handler mHandler = new Handler() {
-        @Override
-        public void handleMessage(Message msg) {
-            Phone.State phoneState;
-            switch (msg.what) {
-                // Starts the SIP service. It's a no-op if SIP API is not supported
-                // on the deivce.
-                // TODO: Having the phone process host the SIP service is only
-                // temporary. Will move it to a persistent communication process
-                // later.
-                case EVENT_START_SIP_SERVICE:
-                    SipService.start(getApplicationContext());
-                    break;
-
-                // TODO: This event should be handled by the lock screen, just
-                // like the "SIM missing" and "Sim locked" cases (bug 1804111).
-                case EVENT_SIM_NETWORK_LOCKED:
-                    if (getResources().getBoolean(R.bool.ignore_sim_network_locked_events)) {
-                        // Some products don't have the concept of a "SIM network lock"
-                        Log.i(LOG_TAG, "Ignoring EVENT_SIM_NETWORK_LOCKED event; "
-                              + "not showing 'SIM network unlock' PIN entry screen");
-                    } else {
-                        // Normal case: show the "SIM network unlock" PIN entry screen.
-                        // The user won't be able to do anything else until
-                        // they enter a valid SIM network PIN.
-                        Log.i(LOG_TAG, "show sim depersonal panel");
-                        IccNetworkDepersonalizationPanel ndpPanel =
-                                new IccNetworkDepersonalizationPanel(PhoneApp.getInstance());
-                        ndpPanel.show();
-                    }
-                    break;
-
-                case EVENT_UPDATE_INCALL_NOTIFICATION:
-                    // Tell the NotificationMgr to update the "ongoing
-                    // call" icon in the status bar, if necessary.
-                    // Currently, this is triggered by a bluetooth headset
-                    // state change (since the status bar icon needs to
-                    // turn blue when bluetooth is active.)
-                    if (DBG) Log.d (LOG_TAG, "- updating in-call notification from handler...");
-                    notificationMgr.updateInCallNotification();
-                    break;
-
-                case EVENT_DATA_ROAMING_DISCONNECTED:
-                    notificationMgr.showDataDisconnectedRoaming();
-                    break;
-
-                case EVENT_DATA_ROAMING_OK:
-                    notificationMgr.hideDataDisconnectedRoaming();
-                    break;
-
-                case MMI_COMPLETE:
-                    onMMIComplete((AsyncResult) msg.obj);
-                    break;
-
-                case MMI_CANCEL:
-                    PhoneUtils.cancelMmiCode(phone);
-                    break;
-
-                case EVENT_WIRED_HEADSET_PLUG:
-                    // Since the presence of a wired headset or bluetooth affects the
-                    // speakerphone, update the "speaker" state.  We ONLY want to do
-                    // this on the wired headset connect / disconnect events for now
-                    // though, so we're only triggering on EVENT_WIRED_HEADSET_PLUG.
-
-                    phoneState = mCM.getState();
-                    // Do not change speaker state if phone is not off hook
-                    if (phoneState == Phone.State.OFFHOOK) {
-                        if (mBtHandsfree == null || !mBtHandsfree.isAudioOn()) {
-                            if (!isHeadsetPlugged()) {
-                                // if the state is "not connected", restore the speaker state.
-                                PhoneUtils.restoreSpeakerMode(getApplicationContext());
-                            } else {
-                                // if the state is "connected", force the speaker off without
-                                // storing the state.
-                                PhoneUtils.turnOnSpeaker(getApplicationContext(), false, false);
-                            }
-                        }
-                    }
-                    // Update the Proximity sensor based on headset state
-                    updateProximitySensorMode(phoneState);
-
-                    // Force TTY state update according to new headset state
-                    if (mTtyEnabled) {
-                        sendMessage(obtainMessage(EVENT_TTY_PREFERRED_MODE_CHANGED, 0));
-                    }
-                    break;
-
-                case EVENT_SIM_STATE_CHANGED:
-                    // Marks the event where the SIM goes into ready state.
-                    // Right now, this is only used for the PUK-unlocking
-                    // process.
-                    if (msg.obj.equals(IccCard.INTENT_VALUE_ICC_READY)) {
-                        // when the right event is triggered and there
-                        // are UI objects in the foreground, we close
-                        // them to display the lock panel.
-                        if (mPUKEntryActivity != null) {
-                            mPUKEntryActivity.finish();
-                            mPUKEntryActivity = null;
-                        }
-                        if (mPUKEntryProgressDialog != null) {
-                            mPUKEntryProgressDialog.dismiss();
-                            mPUKEntryProgressDialog = null;
-                        }
-                    }
-                    break;
-
-                case EVENT_UNSOL_CDMA_INFO_RECORD:
-                    //TODO: handle message here;
-                    break;
-
-                case EVENT_DOCK_STATE_CHANGED:
-                    // If the phone is docked/undocked during a call, and no wired or BT headset
-                    // is connected: turn on/off the speaker accordingly.
-                    boolean inDockMode = false;
-                    if (mDockState != Intent.EXTRA_DOCK_STATE_UNDOCKED) {
-                        inDockMode = true;
-                    }
-                    if (VDBG) Log.d(LOG_TAG, "received EVENT_DOCK_STATE_CHANGED. Phone inDock = "
-                            + inDockMode);
-
-                    phoneState = mCM.getState();
-                    if (phoneState == Phone.State.OFFHOOK &&
-                            !isHeadsetPlugged() &&
-                            !(mBtHandsfree != null && mBtHandsfree.isAudioOn())) {
-                        PhoneUtils.turnOnSpeaker(getApplicationContext(), inDockMode, true);
-                        updateInCallScreen();  // Has no effect if the InCallScreen isn't visible
-                    }
-                    break;
-
-                case EVENT_TTY_PREFERRED_MODE_CHANGED:
-                    // TTY mode is only applied if a headset is connected
-                    int ttyMode;
-                    if (isHeadsetPlugged()) {
-                        ttyMode = mPreferredTtyMode;
-                    } else {
-                        ttyMode = Phone.TTY_MODE_OFF;
-                    }
-                    phone.setTTYMode(ttyMode, mHandler.obtainMessage(EVENT_TTY_MODE_SET));
-                    break;
-
-                case EVENT_TTY_MODE_GET:
-                    handleQueryTTYModeResponse(msg);
-                    break;
-
-                case EVENT_TTY_MODE_SET:
-                    handleSetTTYModeResponse(msg);
-                    break;
-            }
-        }
-    };
+public class PhoneApp extends Application {
+    PhoneGlobals mPhoneGlobals;
 
     public PhoneApp() {
-        sMe = this;
     }
 
     @Override
     public void onCreate() {
+<<<<<<< HEAD
         if (VDBG) Log.v(LOG_TAG, "onCreate()...");
 
         ContentResolver resolver = getContentResolver();
@@ -664,21 +245,24 @@ public class PhoneApp extends Application implements AccelerometerListener.Orien
             audioManager.setParameter(CallFeaturesSetting.HAC_KEY, hac != 0 ?
                                       CallFeaturesSetting.HAC_VAL_ON :
                                       CallFeaturesSetting.HAC_VAL_OFF);
+=======
+        if (UserHandle.myUserId() == 0) {
+            // We are running as the primary user, so should bring up the
+            // global phone state.
+            mPhoneGlobals = new PhoneGlobals(this);
+            mPhoneGlobals.onCreate();
+>>>>>>> aosp/jb-mr1-release
         }
-   }
+    }
 
     @Override
     public void onConfigurationChanged(Configuration newConfig) {
-        if (newConfig.hardKeyboardHidden == Configuration.HARDKEYBOARDHIDDEN_NO) {
-            mIsHardKeyboardOpen = true;
-        } else {
-            mIsHardKeyboardOpen = false;
+        if (mPhoneGlobals != null) {
+            mPhoneGlobals.onConfigurationChanged(newConfig);
         }
-
-        // Update the Proximity sensor based on keyboard state
-        updateProximitySensorMode(mCM.getState());
         super.onConfigurationChanged(newConfig);
     }
+<<<<<<< HEAD
 
     /**
      * Returns the singleton instance of the PhoneApp.
@@ -2019,4 +1603,6 @@ public class PhoneApp extends Application implements AccelerometerListener.Orien
             return PhoneApp.createCallLogIntent();
         }
     }
+=======
+>>>>>>> aosp/jb-mr1-release
 }
