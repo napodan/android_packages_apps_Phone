@@ -5,8 +5,6 @@ LOCAL_PATH:= $(call my-dir)
 #  LOCAL_STATIC_JAVA_LIBRARIES := com.android.phone.common
 include $(CLEAR_VARS)
 
-LOCAL_MODULE_TAGS := user
-
 LOCAL_SRC_FILES := \
 	src/com/android/phone/ButtonGridLayout.java \
 	src/com/android/phone/CallLogAsync.java \
