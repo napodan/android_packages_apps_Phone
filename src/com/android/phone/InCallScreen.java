@@ -53,6 +53,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.ViewConfiguration;
 import android.view.ViewGroup;
+import android.view.ViewStub;
 import android.view.Window;
 import android.view.WindowManager;
 import android.view.accessibility.AccessibilityEvent;
@@ -60,6 +61,7 @@ import android.view.animation.Animation;
 import android.view.animation.AnimationUtils;
 import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ImageView;
 import android.widget.SlidingDrawer;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -567,42 +569,6 @@ public class InCallScreen extends Activity
         setContentView(R.layout.incall_screen);
 
         initInCallScreen();
-
-        // Create the dtmf dialer.  The dialer view we use depends on the
-        // current platform:
-        //
-        // - On non-prox-sensor devices, it's the dialpad contained inside
-        //   a SlidingDrawer widget (see dtmf_twelve_key_dialer.xml).
-        //
-        // - On "full touch UI" devices, it's the compact non-sliding
-        //   dialpad that appears on the upper half of the screen,
-        //   above the main cluster of InCallTouchUi buttons
-        //   (see non_drawer_dialpad.xml).
-        //
-        // TODO: These should both be ViewStubs, and right here we should
-        // inflate one or the other.  (Also, while doing that, let's also
-        // move this block of code over to initInCallScreen().)
-        //
-        SlidingDrawer dialerDrawer;
-        if (isTouchUiEnabled()) {
-            // This is a "full touch" device.
-            mDialerView = (DTMFTwelveKeyDialerView) findViewById(R.id.non_drawer_dtmf_dialer);
-            if (DBG) log("- Full touch device!  Found dialerView: " + mDialerView);
-            dialerDrawer = null;  // No SlidingDrawer used on this device.
-        } else {
-            // Use the old-style dialpad contained within the SlidingDrawer.
-            mDialerView = (DTMFTwelveKeyDialerView) findViewById(R.id.dtmf_dialer);
-            if (DBG) log("- Using SlidingDrawer-based dialpad.  Found dialerView: " + mDialerView);
-            dialerDrawer = (SlidingDrawer) findViewById(R.id.dialer_container);
-            if (DBG) log("  ...and the SlidingDrawer: " + dialerDrawer);
-        }
-        // Sanity-check that (regardless of the device) at least the
-        // dialer view is present:
-        if (mDialerView == null) {
-            Log.e(LOG_TAG, "onCreate: couldn't find dialerView", new IllegalStateException());
-        }
-        // Finally, create the DTMFTwelveKeyDialer instance.
-        mDialer = new DTMFTwelveKeyDialer(this, mDialerView, dialerDrawer);
 
         registerForPhoneStates();
 
@@ -1283,6 +1249,42 @@ public class InCallScreen extends Activity
 
         // Helper class to run the "Manage conference" UI
         mManageConferenceUtils = new ManageConferenceUtils(this, mCM);
+
+        // Create the dtmf dialer.  The dialer view we use depends on the
+        // current platform:
+        //
+        // - On non-prox-sensor devices, it's the dialpad contained inside
+        //   a SlidingDrawer widget (see dtmf_twelve_key_dialer.xml).
+        //
+        // - On "full touch UI" devices, it's the compact non-sliding
+        //   dialpad that appears on the upper half of the screen,
+        //   above the main cluster of InCallTouchUi buttons
+        //   (see non_drawer_dialpad.xml).
+        //
+        SlidingDrawer dialerDrawer;
+        if (isTouchUiEnabled()) {
+            // This is a "full touch" device.
+            ViewStub stub = (ViewStub)findViewById(R.id.non_drawer_dialpad_stub);
+            stub.inflate();
+            mDialerView = (DTMFTwelveKeyDialerView) findViewById(R.id.non_drawer_dtmf_dialer);
+            if (DBG) log("- Full touch device!  Found dialerView: " + mDialerView);
+            dialerDrawer = null;  // No SlidingDrawer used on this device.
+        } else {
+            // Use the old-style dialpad contained within the SlidingDrawer.
+            ViewStub stub = (ViewStub)findViewById(R.id.dtmf_dialer_stub);
+            stub.inflate();
+            mDialerView = (DTMFTwelveKeyDialerView) findViewById(R.id.dtmf_dialer);
+            if (DBG) log("- Using SlidingDrawer-based dialpad.  Found dialerView: " + mDialerView);
+            dialerDrawer = (SlidingDrawer) findViewById(R.id.dialer_container);
+            if (DBG) log("  ...and the SlidingDrawer: " + dialerDrawer);
+        }
+        // Sanity-check that (regardless of the device) at least the
+        // dialer view is present:
+        if (mDialerView == null) {
+            Log.e(LOG_TAG, "onCreate: couldn't find dialerView", new IllegalStateException());
+        }
+        // Finally, create the DTMFTwelveKeyDialer instance.
+        mDialer = new DTMFTwelveKeyDialer(this, mDialerView, dialerDrawer);
     }
 
     /**
@@ -3342,8 +3344,10 @@ public class InCallScreen extends Activity
                                                          mProviderAddress);
 
             TextView message = (TextView) findViewById(R.id.callingVia);
-            message.setCompoundDrawablesWithIntrinsicBounds(mProviderIcon, null, null, null);
             message.setText(text);
+
+            ImageView image = (ImageView) findViewById(R.id.callingViaIcon);
+            image.setImageDrawable(mProviderIcon);
 
             overlay.setVisibility(View.VISIBLE);
 
