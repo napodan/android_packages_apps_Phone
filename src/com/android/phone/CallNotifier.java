@@ -158,7 +158,7 @@ public class CallNotifier extends Handler
     private static final int TONE_RELATIVE_VOLUME_SIGNALINFO = 80;
 
     private Call.State mPreviousCdmaCallState;
-    private boolean mCdmaVoicePrivacyState = false;
+    private boolean mVoicePrivacyState = false;
     private boolean mIsCdmaRedialCall = false;
 
     // Emergency call tone and vibrate:
@@ -311,10 +311,10 @@ public class CallNotifier extends Handler
 
             case PHONE_ENHANCED_VP_ON:
                 if (DBG) log("PHONE_ENHANCED_VP_ON...");
-                if (!mCdmaVoicePrivacyState) {
+                if (!mVoicePrivacyState) {
                     int toneToPlay = InCallTonePlayer.TONE_VOICE_PRIVACY;
                     new InCallTonePlayer(toneToPlay).start();
-                    mCdmaVoicePrivacyState = true;
+                    mVoicePrivacyState = true;
                     // Update the VP icon:
                     if (DBG) log("- updating notification for VP state...");
                     NotificationMgr.getDefault().updateInCallNotification();
@@ -323,10 +323,10 @@ public class CallNotifier extends Handler
 
             case PHONE_ENHANCED_VP_OFF:
                 if (DBG) log("PHONE_ENHANCED_VP_OFF...");
-                if (mCdmaVoicePrivacyState) {
+                if (mVoicePrivacyState) {
                     int toneToPlay = InCallTonePlayer.TONE_VOICE_PRIVACY;
                     new InCallTonePlayer(toneToPlay).start();
-                    mCdmaVoicePrivacyState = false;
+                    mVoicePrivacyState = false;
                     // Update the VP icon:
                     if (DBG) log("- updating notification for VP state...");
                     NotificationMgr.getDefault().updateInCallNotification();
@@ -411,9 +411,7 @@ public class CallNotifier extends Handler
         }
 
         // Stop any signalInfo tone being played on receiving a Call
-        if (phone.getPhoneType() == Phone.PHONE_TYPE_CDMA) {
-            stopSignalInfoTone();
-        }
+        stopSignalInfoTone();
 
         Call.State state = c.getState();
         // State will be either INCOMING or WAITING.
@@ -903,17 +901,17 @@ public class CallNotifier extends Handler
         }
 
 
-        mCdmaVoicePrivacyState = false;
+        mVoicePrivacyState = false;
         int autoretrySetting = 0;
         if ((c != null) && (c.getCall().getPhone().getPhoneType() == Phone.PHONE_TYPE_CDMA)) {
             autoretrySetting = android.provider.Settings.System.getInt(mApplication.
                     getContentResolver(),android.provider.Settings.System.CALL_AUTO_RETRY, 0);
         }
 
-        if ((c != null) && (c.getCall().getPhone().getPhoneType() == Phone.PHONE_TYPE_CDMA)) {
-            // Stop any signalInfo tone being played when a call gets ended
-            stopSignalInfoTone();
+        // Stop any signalInfo tone being played when a call gets ended
+        stopSignalInfoTone();
 
+        if ((c != null) && (c.getCall().getPhone().getPhoneType() == Phone.PHONE_TYPE_CDMA)) {
             // Resetting the CdmaPhoneCallState members
             mApplication.cdmaPhoneCallState.resetCdmaPhoneCallState();
 
@@ -1738,10 +1736,10 @@ public class CallNotifier extends Handler
     }
 
     /**
-     * Return the private variable mCdmaVoicePrivacyState.
+     * Return the private variable mVoicePrivacyState.
      */
-    /* package */ boolean getCdmaVoicePrivacyState() {
-        return mCdmaVoicePrivacyState;
+    /* package */ boolean getVoicePrivacyState() {
+        return mVoicePrivacyState;
     }
 
     /**
