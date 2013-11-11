@@ -674,10 +674,8 @@ public class InCallScreen extends Activity
 
         takeKeyEvents(true);
 
-        boolean phoneIsCdma = (mPhone.getPhoneType() == Phone.PHONE_TYPE_CDMA);
-
         boolean inOtaCall = false;
-        if (phoneIsCdma) {
+        if (TelephonyCapabilities.supportsOtasp(mPhone)) {
             inOtaCall = initOtaState();
         }
         if (!inOtaCall) {
@@ -731,7 +729,7 @@ public class InCallScreen extends Activity
                 endInCallScreenSession(true /* force a real finish() call */);
                 return;
             }
-        } else if (phoneIsCdma) {
+        } else if (TelephonyCapabilities.supportsOtasp(mPhone)) {
             if (mInCallScreenMode == InCallScreenMode.OTA_NORMAL ||
                     mInCallScreenMode == InCallScreenMode.OTA_ENDED) {
                 mDialer.setHandleVisible(false);
