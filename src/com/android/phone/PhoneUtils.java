@@ -524,170 +524,146 @@ public class PhoneUtils {
     /**
      * Dial the number using the phone passed in.
      *
-     * @param phone the Phone object.
-     * @param number to be dialed as requested by the user.
-     * @param contactRef that triggered the call. Either a 'tel:' or a
-     * 'content://contacts' uri depending on how the call was
-     * initiated (dialpad vs contact).
-     * @return either CALL_STATUS_DIALED, CALL_STATUS_DIALED_MMI, or CALL_STATUS_FAILED
-     */
-    static int placeCall(Phone phone, String number, Uri contactRef) {
-        int status = CALL_STATUS_DIALED;
-        try {
-            if (DBG) log("placeCall: '" + number + "'...");
-
-            Connection cn = PhoneApp.getInstance().mCM.dial(phone, number);
-            if (DBG) log("===> phone.dial() returned: " + cn);
-
-            int phoneType = phone.getPhoneType();
-
-            // On GSM phones, null is returned for MMI codes
-            if (cn == null) {
-                if (phoneType == Phone.PHONE_TYPE_GSM) {
-                    if (DBG) log("dialed MMI code: " + number);
-                    status = CALL_STATUS_DIALED_MMI;
-                    // Set dialed MMI command to service
-                    if (mNwService != null) {
-                        try {
-                            mNwService.setMmiString(number);
-                            if (DBG) log("Extended NW bindService setUssdString (" + number + ")");
-                        } catch (RemoteException e) {
-                            mNwService = null;
-                        }
-                    }
-                } else {
-                    status = PhoneUtils.CALL_STATUS_FAILED;
-                }
-            } else {
-                PhoneApp app = PhoneApp.getInstance();
-
-                if (phoneType == Phone.PHONE_TYPE_CDMA) {
-                    updateCdmaCallStateOnNewOutgoingCall(app);
-                }
-
-                // phone.dial() succeeded: we're now in a normal phone call.
-                // attach the URI to the CallerInfo Object if it is there,
-                // otherwise just attach the Uri Reference.
-                // if the uri does not have a "content" scheme, then we treat
-                // it as if it does NOT have a unique reference.
-                String content = phone.getContext().getContentResolver().SCHEME_CONTENT;
-                if ((contactRef != null) && (contactRef.getScheme().equals(content))) {
-                    Object userDataObject = cn.getUserData();
-                    if (userDataObject == null) {
-                        cn.setUserData(contactRef);
-                    } else {
-                        // TODO: This branch is dead code, we have
-                        // just created the connection 'cn' which has
-                        // no user data (null) by default.
-                        if (userDataObject instanceof CallerInfo) {
-                            ((CallerInfo) userDataObject).contactRefUri = contactRef;
-                        } else {
-                            ((CallerInfoToken) userDataObject).currentInfo.contactRefUri =
-                                contactRef;
-                        }
-                    }
-                }
-                setAudioMode();
-
-                // Check is phone in any dock, and turn on speaker accordingly
-                activateSpeakerIfDocked(phone);
-            }
-        } catch (CallStateException ex) {
-            Log.w(LOG_TAG, "Exception from phone.dial()", ex);
-            status = CALL_STATUS_FAILED;
-        }
-
-        return status;
-    }
-
-    /**
-     * Dial the number using a 3rd party provider gateway.  Should
-     * *NOT* be called if the number is either:
-     * . An emergency one
-     * . A GSM MMI code
-     * . A CDMA feature code
-     * None of the above is  checked in this method, it's the caller's
-     * responsability to make sure the number is 'valid'.
-     *
      * If the connection is establised, this method issues a sync call
      * that may block to query the caller info.
      * TODO: Change the logic to use the async query.
      *
-     * @param phone the Phone object.
      * @param context To perform the CallerInfo query.
+     * @param phone the Phone object.
      * @param number to be dialed as requested by the user. This is
      * NOT the phone number to connect to. It is used only to build the
      * call card and to update the call log. See above for restrictions.
      * @param contactRef that triggered the call. Typically a 'tel:'
      * uri but can also be a 'content://contacts' one.
-     * @param gatewayUri Is the address used to setup the connection.
+     * @param isEmergencyCall indicates that whether or not this is an
+     * emergency call
+     * @param gatewayUri Is the address used to setup the connection, null
+     * if not using a gateway
+     *
      * @return either CALL_STATUS_DIALED or CALL_STATUS_FAILED
      */
-    static int placeCallVia(Context context, Phone phone,
-                            String number, Uri contactRef, Uri gatewayUri) {
-        if (DBG) log("placeCallVia: '" + number + "' GW:'" + gatewayUri + "'");
-
-        // TODO: 'tel' should be a contant defined in framework base
-        // somewhere (it is in webkit.)
-        if (null == gatewayUri || !"tel".equals(gatewayUri.getScheme())) {
-            Log.e(LOG_TAG, "Unsupported URL:" + gatewayUri);
-            return CALL_STATUS_FAILED;
+    public static int placeCall(Context context, Phone phone,
+            String number, Uri contactRef, boolean isEmergencyCall, 
+            Uri gatewayUri) {
+        if (DBG) log("placeCall '" + number + "' GW:'" + gatewayUri + "'");
+        boolean useGateway = false;
+        if (null != gatewayUri &&
+            !isEmergencyCall &&
+            PhoneUtils.isRoutableViaGateway(number)) {  // Filter out MMI, OTA and other codes.
+            useGateway = true;
         }
 
-        // We can use getSchemeSpecificPart because we don't allow #
-        // in the gateway numbers (treated a fragment delim.) However
-        // if we allow more complex gateway numbers sequence (with
-        // passwords or whatnot) that use #, this may break.
-        // TODO: Need to support MMI codes.
-        String gatewayNumber = gatewayUri.getSchemeSpecificPart();
+        int status = CALL_STATUS_DIALED;
         Connection connection;
+        String numberToDial;
+        if (useGateway) {
+            // TODO: 'tel' should be a constant defined in framework base
+            // somewhere (it is in webkit.)
+            if (null == gatewayUri || !"tel".equals(gatewayUri.getScheme())) {
+                Log.e(LOG_TAG, "Unsupported URL:" + gatewayUri);
+                return CALL_STATUS_FAILED;
+            }
+
+            // We can use getSchemeSpecificPart because we don't allow #
+            // in the gateway numbers (treated a fragment delim.) However
+            // if we allow more complex gateway numbers sequence (with
+            // passwords or whatnot) that use #, this may break.
+            // TODO: Need to support MMI codes.
+            numberToDial = gatewayUri.getSchemeSpecificPart();
+        } else {
+            numberToDial = number;
+        }
+
         try {
-            connection = PhoneApp.getInstance().mCM.dial(phone, gatewayNumber);
+            connection = PhoneApp.getInstance().mCM.dial(phone, numberToDial);
         } catch (CallStateException ex) {
-            Log.e(LOG_TAG, "Exception dialing gateway", ex);
+            Log.e(LOG_TAG, "Exception dialing ", ex);
             connection = null;
         }
 
+        int phoneType = phone.getPhoneType();
+
+        // On GSM phones, null is returned for MMI codes
         if (null == connection) {
-            Log.e(LOG_TAG, "Got null connection.");
-            return CALL_STATUS_FAILED;
+            if (phoneType == Phone.PHONE_TYPE_GSM && gatewayUri == null) {
+                if (DBG) log("dialed MMI code: " + number);
+                status = CALL_STATUS_DIALED_MMI;
+                // Set dialed MMI command to service
+                if (mNwService != null) {
+                    try {
+                        mNwService.setMmiString(number);
+                        if (DBG) log("Extended NW bindService setUssdString (" + number + ")");
+                    } catch (RemoteException e) {
+                        mNwService = null;
+                    }
+                }
+            } else {
+                status = CALL_STATUS_FAILED;
+            }
+        } else {
+            PhoneApp app = PhoneApp.getInstance();
+            if (phoneType == Phone.PHONE_TYPE_CDMA) {
+                updateCdmaCallStateOnNewOutgoingCall(app);
+            }
+
+            // Clean up the number to be displayed.
+            if (phoneType == Phone.PHONE_TYPE_CDMA) {
+                number = CdmaConnection.formatDialString(number);
+            }
+            number = PhoneNumberUtils.extractNetworkPortion(number);
+            number = PhoneNumberUtils.convertKeypadLettersToDigits(number);
+            number = PhoneNumberUtils.formatNumber(number);
+
+            if (gatewayUri == null) {
+                // phone.dial() succeeded: we're now in a normal phone call.
+                // attach the URI to the CallerInfo Object if it is there,
+                // otherwise just attach the Uri Reference.
+                // if the uri does not have a "content" scheme, then we treat
+                // it as if it does NOT have a unique reference.
+                String content = context.getContentResolver().SCHEME_CONTENT;
+                if ((contactRef != null) && (contactRef.getScheme().equals(content))) {
+                    Object userDataObject = connection.getUserData();
+                    if (userDataObject == null) {
+                        connection.setUserData(contactRef);
+                    } else {
+                        // TODO: This branch is dead code, we have
+                        // just created the connection which has
+                        // no user data (null) by default.
+                        if (userDataObject instanceof CallerInfo) {
+                        ((CallerInfo) userDataObject).contactRefUri = contactRef;
+                        } else {
+                        ((CallerInfoToken) userDataObject).currentInfo.contactRefUri =
+                            contactRef;
+                        }
+                    }
+                }
+            } else {
+                // Get the caller info synchronously because we need the final
+                // CallerInfo object to update the dialed number with the one
+                // requested by the user (and not the provider's gateway number).
+                CallerInfo info = null;
+                String content = phone.getContext().getContentResolver().SCHEME_CONTENT;
+                if ((contactRef != null) && (contactRef.getScheme().equals(content))) {
+                    info = CallerInfo.getCallerInfo(context, contactRef);
+                }
+
+                // Fallback, lookup contact using the phone number if the
+                // contact's URI scheme was not content:// or if is was but
+                // the lookup failed.
+                if (null == info) {
+                    info = CallerInfo.getCallerInfo(context, number);
+                }
+                info.phoneNumber = number;
+                connection.setUserData(info);
+            }
+            setAudioMode();
+
+            if (DBG) log("about to activate speaker");
+            // Check is phone in any dock, and turn on speaker accordingly
+            activateSpeakerIfDocked(phone);
         }
 
-        PhoneApp app = PhoneApp.getInstance();
-        boolean phoneIsCdma = (phone.getPhoneType() == Phone.PHONE_TYPE_CDMA);
-
-        if (phoneIsCdma) {
-            updateCdmaCallStateOnNewOutgoingCall(app);
-        }
-
-        // Clean up the number to be displayed.
-        if (phoneIsCdma) {
-            number = CdmaConnection.formatDialString(number);
-        }
-        number = PhoneNumberUtils.extractNetworkPortion(number);
-        number = PhoneNumberUtils.convertKeypadLettersToDigits(number);
-        number = PhoneNumberUtils.formatNumber(number);
-
-        // Get the caller info synchronously because we need the final
-        // CallerInfo object to update the dialed number with the one
-        // requested by the user (and not the provider's gateway number).
-        CallerInfo info = null;
-
-        if (ContentResolver.SCHEME_CONTENT.equals(contactRef.getScheme())) {
-            info = CallerInfo.getCallerInfo(context, contactRef);
-        }
-
-        // Fallback, lookup contact using the phone number if the
-        // contact's URI scheme was not content:// or if is was but
-        // the lookup failed.
-        if (null == info) {
-            info = CallerInfo.getCallerInfo(context, number);
-        }
-        info.phoneNumber = number;
-        connection.setUserData(info);
-
-        setAudioMode();
-        return CALL_STATUS_DIALED;
+        return status;
     }
 
     /**

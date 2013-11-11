@@ -2683,15 +2683,8 @@ public class InCallScreen extends Activity
         int callStatus;
         Uri contactUri = intent.getData();
 
-        if (null != mProviderGatewayUri &&
-            !(isEmergencyNumber || isEmergencyIntent) &&
-            PhoneUtils.isRoutableViaGateway(number)) {  // Filter out MMI, OTA and other codes.
-
-            callStatus = PhoneUtils.placeCallVia(
-                this, phone, number, contactUri, mProviderGatewayUri);
-        } else {
-            callStatus = PhoneUtils.placeCall(phone, number, contactUri);
-        }
+        callStatus = PhoneUtils.placeCall(this, phone, number, contactUri,
+                (isEmergencyNumber || isEmergencyIntent), mProviderGatewayUri);
 
         switch (callStatus) {
             case PhoneUtils.CALL_STATUS_DIALED:
