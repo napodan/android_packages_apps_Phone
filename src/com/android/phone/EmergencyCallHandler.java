@@ -133,7 +133,7 @@ public class EmergencyCallHandler extends Activity {
         }
 
         // setup the phone and get the retry count embedded in the intent.
-        Phone phone = PhoneFactory.getDefaultPhone();
+        Phone phone = PhoneApp.getPhone();
         int retryCount = getIntent().getIntExtra(EMERGENCY_CALL_RETRY_KEY, INITIAL_ATTEMPT);
         
         // create a new message object.

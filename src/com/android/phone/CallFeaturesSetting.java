@@ -52,7 +52,6 @@ import android.widget.ListAdapter;
 import com.android.internal.telephony.CallForwardInfo;
 import com.android.internal.telephony.CommandsInterface;
 import com.android.internal.telephony.Phone;
-import com.android.internal.telephony.PhoneFactory;
 import com.android.internal.telephony.cdma.TtyIntent;
 import com.android.phone.sip.SipSharedPreferences;
 
@@ -1345,7 +1344,7 @@ public class CallFeaturesSetting extends PreferenceActivity
     protected void onCreate(Bundle icicle) {
         super.onCreate(icicle);
         if (DBG) log("Creating activity");
-        mPhone = PhoneFactory.getDefaultPhone();
+        mPhone = PhoneApp.getPhone();
 
         addPreferencesFromResource(R.xml.call_feature_setting);
 
